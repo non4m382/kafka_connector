@@ -35,55 +35,6 @@ func (ResponseReceiver) Response(res types.InvokerResponse) {
 	}
 }
 
-func consumeKafka() {
-	var (
-		// kafka
-		kafkaBrokerUrl     string
-		kafkaVerbose       bool
-		kafkaTopic         string
-		kafkaConsumerGroup string
-		kafkaClientId      string
-	)
-
-	flag.StringVar(&kafkaBrokerUrl, "kafka-brokers", "localhost:9092", "Kafka brokers in comma separated value")
-	flag.BoolVar(&kafkaVerbose, "kafka-verbose", true, "Kafka verbose logging")
-	flag.StringVar(&kafkaTopic, "kafka-topic", "create_transaction", "Kafka topic. Only one topic per worker.")
-	flag.StringVar(&kafkaConsumerGroup, "kafka-consumer-group", "go-group", "Kafka consumer group")
-	flag.StringVar(&kafkaClientId, "kafka-client-id", "my-client-id", "Kafka client id")
-
-	flag.Parse()
-
-	sigchan := make(chan os.Signal, 1)
-	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
-
-	brokers := strings.Split(kafkaBrokerUrl, ",")
-
-	// make a new reader that consumes from topic-A
-	config := kafka.ReaderConfig{
-		Brokers:         brokers,
-		GroupID:         kafkaClientId,
-		Topic:           kafkaTopic,
-		MinBytes:        10e3,            // 10KB
-		MaxBytes:        10e6,            // 10MB
-		MaxWait:         1 * time.Second, // Maximum amount of time to wait for new data to come when fetching batches of messages from kafka.
-		ReadLagInterval: -1,
-	}
-
-	reader := kafka.NewReader(config)
-	defer reader.Close()
-
-	for {
-		m, err := reader.ReadMessage(context.Background())
-		if err != nil {
-			log.Panicf("error while receiving message: %s", err.Error())
-			continue
-		}
-
-		value := m.Value
-		fmt.Printf("message at topic/partition/offset %v/%v/%v: %s\n", m.Topic, m.Partition, m.Offset, string(value))
-	}
-}
-
 func consumeKafkaFull() {
 	var (
 		// kafka
@@ -98,6 +49,7 @@ func consumeKafkaFull() {
 		interval time.Duration
 	)
 
+	//kafka config
 	flag.StringVar(&kafkaBrokerUrl, "kafka-brokers", "localhost:9092", "Kafka brokers in comma separated value")
 	flag.BoolVar(&kafkaVerbose, "kafka-verbose", true, "Kafka verbose logging")
 	flag.StringVar(&kafkaTopic, "kafka-topic", "create_transaction", "Kafka topic. Only one topic per worker.")
@@ -125,11 +77,11 @@ func consumeKafkaFull() {
 	reader := kafka.NewReader(kafkaConfig)
 	defer reader.Close()
 
+	//openfaas config
 	flag.StringVar(&username, "username", "admin", "username")
 	flag.StringVar(&password, "password", "I2aHmJdPCxqc", "password")
 	flag.StringVar(&gateway, "gateway", "http://localhost:8088", "gateway")
 	flag.DurationVar(&interval, "interval", time.Second*10, "Interval between emitting a sample message")
-	//flag.StringVar(&topic, "topic", "payment.received", "Sample topic name to emit from timer")
 
 	flag.Parse()
 
@@ -153,14 +105,11 @@ func consumeKafkaFull() {
 	fmt.Printf("Tester connector. Topic: %s, Interval: %s\n", kafkaTopic, interval)
 
 	controller := types.NewController(creds, connectorConfig)
-
 	receiver := ResponseReceiver{}
 	controller.Subscribe(&receiver)
-
 	controller.BeginMapBuilder()
 
 	additionalHeaders := http.Header{}
-	additionalHeaders.Add("X-Connector", "cmd/timer")
 
 	for {
 		m, err := reader.ReadMessage(context.Background())
@@ -168,17 +117,12 @@ func consumeKafkaFull() {
 			log.Panicf("error while receiving message: %s", err.Error())
 			continue
 		}
-
 		var value = m.Value
-
-		var y *[]byte = &value
-
+		var request = &value
 		fmt.Printf("message at topic/partition/offset %v/%v/%v: %s\n", m.Topic, m.Partition, m.Offset, string(value))
 		log.Printf("[tester] Emitting event on topic %s - %s\n", m.Topic, gateway)
-
 		h := additionalHeaders.Clone()
-
-		controller.Invoke(kafkaTopic, y, h)
+		controller.Invoke(kafkaTopic, request, h)
 	}
 
 }
