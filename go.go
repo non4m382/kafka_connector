@@ -50,40 +50,24 @@ func consumeKafkaFull() {
 	)
 
 	//kafka config
-	flag.StringVar(&kafkaBrokerUrl, "kafka-brokers", "localhost:9092", "Kafka brokers in comma separated value")
+	flag.StringVar(&kafkaBrokerUrl, "kafka-brokers", "kafka.dtcsolution.vn:9094", "Kafka brokers in comma separated value")
 	flag.BoolVar(&kafkaVerbose, "kafka-verbose", true, "Kafka verbose logging")
-	flag.StringVar(&kafkaTopic, "kafka-topic", "create_transaction", "Kafka topic. Only one topic per worker.")
+	flag.StringVar(&kafkaTopic, "kafka-topic", "create_transaction,send_notify", "Kafka topic. Only one topic per worker.")
 	flag.StringVar(&kafkaConsumerGroup, "kafka-consumer-group", "go-group", "Kafka consumer group")
 	flag.StringVar(&kafkaClientId, "kafka-client-id", "my-client-id", "Kafka client id")
-
-	flag.Parse()
-
-	sigchan := make(chan os.Signal, 1)
-	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
-
-	brokers := strings.Split(kafkaBrokerUrl, ",")
-
-	// make a new reader that consumes from topic-A
-	kafkaConfig := kafka.ReaderConfig{
-		Brokers:         brokers,
-		GroupID:         kafkaClientId,
-		Topic:           kafkaTopic,
-		MinBytes:        10e3,            // 10KB
-		MaxBytes:        10e6,            // 10MB
-		MaxWait:         1 * time.Second, // Maximum amount of time to wait for new data to come when fetching batches of messages from kafka.
-		ReadLagInterval: -1,
-	}
-
-	reader := kafka.NewReader(kafkaConfig)
-	defer reader.Close()
 
 	//openfaas config
 	flag.StringVar(&username, "username", "admin", "username")
 	flag.StringVar(&password, "password", "I2aHmJdPCxqc", "password")
 	flag.StringVar(&gateway, "gateway", "http://localhost:8088", "gateway")
 	flag.DurationVar(&interval, "interval", time.Second*10, "Interval between emitting a sample message")
-
 	flag.Parse()
+
+	sigchan := make(chan os.Signal, 1)
+	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+
+	brokers := strings.Split(kafkaBrokerUrl, ",")
+	topics := strings.Split(kafkaTopic, ",")
 
 	creds := &auth.BasicAuthCredentials{
 		User:     username,
@@ -111,6 +95,20 @@ func consumeKafkaFull() {
 
 	additionalHeaders := http.Header{}
 
+	kafkaConfig := kafka.ReaderConfig{
+		Brokers:     brokers,
+		GroupID:     kafkaClientId,
+		GroupTopics: topics,
+		//Topic:           topic,
+		MinBytes:        10e3,            // 10KB
+		MaxBytes:        10e6,            // 10MB
+		MaxWait:         1 * time.Second, // Maximum amount of time to wait for new data to come when fetching batches of messages from kafka.
+		ReadLagInterval: -1,
+	}
+
+	reader := kafka.NewReader(kafkaConfig)
+	defer reader.Close()
+
 	for {
 		m, err := reader.ReadMessage(context.Background())
 		if err != nil {
@@ -122,7 +120,7 @@ func consumeKafkaFull() {
 		fmt.Printf("message at topic/partition/offset %v/%v/%v: %s\n", m.Topic, m.Partition, m.Offset, string(value))
 		log.Printf("[tester] Emitting event on topic %s - %s\n", m.Topic, gateway)
 		h := additionalHeaders.Clone()
-		controller.Invoke(kafkaTopic, request, h)
+		controller.Invoke(m.Topic, request, h)
 	}
 
 }
